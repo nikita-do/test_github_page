@@ -1,1 +1,122 @@
-<h>hello</h>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MQTT Web App - Drive Download</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    button { margin-right: 10px; padding: 10px 20px; font-size: 16px; }
+    #log { margin-top: 20px; padding: 10px; background: #f0f0f0; height: 300px; overflow-y: scroll; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <h2>MQTT Web App</h2>
+  <button onclick="startCommand()">Start</button>
+  <button onclick="stopCommand()">Stop & Download</button>
+  
+  <div id="log"></div>
+
+  <script>
+    // Replace these with your credentials
+    const MQTT_BROKER_URL = "wss://700be638167b43289186dff783367cc3.s1.eu.hivemq.cloud:8884/mqtt";
+    const MQTT_USERNAME = "ngocdo";
+    const MQTT_PASSWORD = "Ng19102002";
+
+    let client;
+    let waitingForDriveLink = false;
+
+    connectClient();
+
+    function connectClient() {
+      client = mqtt.connect(MQTT_BROKER_URL, {
+        username: MQTT_USERNAME,
+        password: MQTT_PASSWORD
+      });
+
+      client.on('connect', () => {
+        log("Connected to broker.");
+      });
+
+      client.on('message', (topic, message) => {
+        log(`Message on ${topic}: ${message.toString()}`);
+
+        if (waitingForDriveLink && topic === 'device/data/file') {
+          waitingForDriveLink = false;
+
+          // Expect the message to be a Google Drive share link
+          const driveUrl = message.toString();
+          log(`Received Drive link: ${driveUrl}`);
+
+          // Extract file ID from the link
+          const fileId = extractDriveFileId(driveUrl);
+          if (fileId) {
+            const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+            log(`Download URL: ${downloadUrl}`);
+
+            // Trigger download automatically
+            triggerDownload(downloadUrl);
+          } else {
+            log("Could not extract file ID from Google Drive link.");
+          }
+
+          // Unsubscribe after getting the link
+          client.unsubscribe('device/data/file');
+          log("Unsubscribed from device/data/file");
+        }
+      });
+
+      client.on('error', (err) => {
+        log("Error: " + err.message);
+      });
+    }
+
+    function startCommand() {
+      log("Publishing START command...");
+      client.publish('device/commands/', 'START');
+    }
+
+    function stopCommand() {
+      log("Publishing STOP command...");
+      client.publish('device/commands/', 'STOP');
+
+      // Subscribe to receive Google Drive link
+      client.subscribe('device/data/file', (err) => {
+        if (!err) {
+          log("Subscribed to device/data/file. Waiting for Drive link...");
+          waitingForDriveLink = true;
+        } else {
+          log("Subscribe error: " + err.message);
+        }
+      });
+    }
+
+    function extractDriveFileId(url) {
+      const regex = /\/d\/([^\/]+)\//;
+      const match = url.match(regex);
+      if (match && match[1]) {
+        return match[1];
+      }
+      return null;
+    }
+
+    function triggerDownload(downloadUrl) {
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = ''; // let Google Drive filename take over
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      log("Download triggered.");
+    }
+
+    function log(msg) {
+      const logDiv = document.getElementById("log");
+      logDiv.innerHTML += msg + "<br>";
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+  </script>
+</body>
+</html>
